@@ -2,7 +2,7 @@
 # coding: utf-8
 
 # ### TO DO ###
-# 
+#
 # - [x] Fix no data for first week
 # - [x] Add cumulative to standings
 # - [x] Check by week when new data comes
@@ -25,15 +25,17 @@ team_details_url = {}
 lineup_url = {}
 
 for owner_id, owner in enumerate(owners):
-    team_details_url[owner] = 'https://draft.premierleague.com/api/entry/' + owner_ids[owner_id] + '/history'
+    team_details_url[owner] = 'https://draft.premierleague.com/api/entry/' + \
+        owner_ids[owner_id] + '/history'
     for gameweek in range(1, 39):
-        lineup_url[owner, gameweek] = 'https://draft.premierleague.com/api/entry/' + owner_ids[
-            owner_id] + '/event/' + str(gameweek)
+        lineup_url[owner, gameweek] = 'https://draft.premierleague.com/api/entry/' + \
+            owner_ids[owner_id] + '/event/' + str(gameweek)
 
 bootstrap_url = 'https://draft.premierleague.com/api/bootstrap-static'
 fantasy_bootstrap_url = 'https://fantasy.premierleague.com/api/bootstrap-static/'
 player_owner_url = 'https://draft.premierleague.com/api/league/5857/element-status'
 league_details_url = 'https://draft.premierleague.com/api/league/5857/details'
+transactions_url = 'https://draft.premierleague.com/api/draft/league/5857/transactions'
 
 current_gameweek = requests.get(bootstrap_url).json()['events']['current']
 total_fantasy_players = requests.get(fantasy_bootstrap_url).json()['total_players']
@@ -69,6 +71,18 @@ raw_player_info_df['element_type'] = raw_player_info_df.element_type.map(
 raw_player_info_df.insert(3, 'owner',
                           raw_player_owner_df.owner.map(raw_league_entries_df.set_index('entry_id').player_first_name))
 
+transactions_df = url_to_df(transactions_url, 'transactions')
+transactions_df['entry'] = transactions_df.entry.map(
+    raw_league_entries_df.set_index('entry_id').player_first_name)
+transactions_df['player in'] = transactions_df.element_in.map(
+    raw_player_info_df.set_index('id').web_name)
+transactions_df['player out'] = transactions_df.element_out.map(
+    raw_player_info_df.set_index('id').web_name)
+transactions_df = transactions_df[['entry', 'kind', 'result', 'player in', 'player out']]
+
+successful_transactions_df = transactions_df.loc[transactions_df['result'] == 'a']
+failed_transactions_df = transactions_df.loc[transactions_df['result'] != 'a']
+
 
 # #### Functions for making specific DataFrames ####
 
@@ -81,8 +95,7 @@ def get_lineup_info(p_owner, p_gameweek=current_gameweek, p_with_totals=True):
     # create dataframe:
     info_columns = ['name', 'team', 'position']
     points_columns = ['minutes', 'goals_scored', 'goals_conceded', 'penalties_missed', 'penalties_saved', 'assists',
-                      'saves',
-                      'own_goals', 'yellow_cards', 'red_cards', 'total_points']
+                      'saves', 'own_goals', 'yellow_cards', 'red_cards', 'total_points']
     lineup_df = pd.DataFrame(columns=info_columns + ['value', 'selected %'] + points_columns,
                              index=url_to_df(lineup_url[p_owner, p_gameweek], 'picks')['element'])
     lineup_df.insert(15, 'foul points', pd.Series([], dtype=object))
@@ -98,14 +111,15 @@ def get_lineup_info(p_owner, p_gameweek=current_gameweek, p_with_totals=True):
             lineup_df.loc[lineup_df.index == player, data] = 0
         player_url = 'https://draft.premierleague.com/api/element-summary/' + str(player)
         player_df = url_to_df(player_url, 'history')
-        fantasy_player_url = 'https://fantasy.premierleague.com/api/element-summary/' + str(player) + '/'
+        fantasy_player_url = 'https://fantasy.premierleague.com/api/element-summary/' + \
+            str(player) + '/'
         fantasy_player_df = url_to_df(fantasy_player_url, 'history')
         if not player_df.loc[player_df['event'] == p_gameweek].empty:
             lineup_df.loc[lineup_df.index == player, 'value'] = \
                 fantasy_player_df.loc[fantasy_player_df['round'] == p_gameweek]['value'].iloc[0] / 10
             lineup_df.loc[lineup_df.index == player, 'selected %'] = \
-                fantasy_player_df.loc[fantasy_player_df['round'] == p_gameweek]['selected'].iloc[
-                    0] / total_fantasy_players * 100
+                fantasy_player_df.loc[fantasy_player_df['round'] ==
+                                      p_gameweek]['selected'].iloc[0] / total_fantasy_players * 100
             for data in points_columns:
                 lineup_df.loc[lineup_df.index == player, data] = \
                     player_df.loc[player_df['event'] == p_gameweek][data].iloc[0]
@@ -141,7 +155,7 @@ def get_lineup_info(p_owner, p_gameweek=current_gameweek, p_with_totals=True):
     return lineup_df
 
 
-def get_league_points_df(cumulative=True,totals=True):
+def get_league_points_df(cumulative=True, totals=True):
     gameweek_range = range(1, current_gameweek + 1)
     # create dataframe:
     league_standings_df = pd.DataFrame(columns=gameweek_range, index=owners)
@@ -151,7 +165,8 @@ def get_league_points_df(cumulative=True,totals=True):
     for i_owner in owners:
         team_info_df[i_owner] = url_to_df(team_details_url[i_owner], 'history')
         for i_gameweek in gameweek_range:
-            points = team_info_df[i_owner].loc[team_info_df[i_owner]['event'] == i_gameweek, 'points'].iloc[0]
+            points = team_info_df[i_owner].loc[team_info_df[i_owner]
+                                               ['event'] == i_gameweek, 'points'].iloc[0]
             if i_gameweek == 1 or not cumulative:
                 league_standings_df.loc[i_owner, i_gameweek] = points
             else:
@@ -162,20 +177,38 @@ def get_league_points_df(cumulative=True,totals=True):
             else:
                 league_standings_df.loc[i_owner, 'total points'] = league_standings_df.loc[i_owner, :].sum()
 
-    league_standings_df = league_standings_df.sort_values(league_standings_df.columns[-1], ascending=False)
+    league_standings_df = league_standings_df.sort_values(
+        league_standings_df.columns[-1], ascending=False)
     return league_standings_df
+
 
 def get_league_positions_df():
     gameweek_range = range(1, current_gameweek + 1)
-    league_points_df = get_league_points_df(cumulative=True,totals=False)
+    league_points_df = get_league_points_df(cumulative=True, totals=False)
     league_position_df = pd.DataFrame(columns=gameweek_range, index=owners)
     for i_gameweek in gameweek_range:
         league_points_df = league_points_df.sort_values(i_gameweek, ascending=False)
         for i, i_owner in enumerate(league_points_df.index):
             league_position_df.loc[i_owner, i_gameweek] = (i+1)
 
-    league_position_df = league_position_df.sort_values(league_position_df.columns[-1], ascending=True)
+    league_position_df = league_position_df.sort_values(
+        league_position_df.columns[-1], ascending=True)
     return league_position_df
+
+
+def get_league_points_gap_df():
+    gameweek_range = range(1, current_gameweek + 1)
+    league_points_df = get_league_points_df(cumulative=True, totals=False)
+    league_points_gap_df = pd.DataFrame(columns=gameweek_range, index=owners)
+    for i_gameweek in gameweek_range:
+        gameweek_min = min(league_points_df[i_gameweek])
+        for i_owner in league_points_df.index:
+            league_points_gap_df.loc[i_owner,
+                                     i_gameweek] = league_points_df.loc[i_owner, i_gameweek]-gameweek_min
+
+    league_points_gap_df = league_points_gap_df.sort_values(
+        league_points_gap_df.columns[-1], ascending=False)
+    return league_points_gap_df
 
 
 # #### Get all info (only run when new info to retrieve) ####
@@ -201,22 +234,26 @@ def get_league_stats_df_by_gameweek(all_lineups_df, include_bench=False):
     league_stats_df = {}
     gameweek_range = range(1, current_gameweek + 1)
     for i_gameweek in gameweek_range:
-        league_stats_df[i_gameweek] = pd.DataFrame(columns=stats + ['weekly position'], index=owners)
+        league_stats_df[i_gameweek] = pd.DataFrame(
+            columns=stats + ['weekly position'], index=owners)
         league_stats_df[i_gameweek].insert(5, 'productivity', 0)
         league_stats_df[i_gameweek].insert(8, 'goal difference', pd.Series([], dtype=object))
 
         for i_owner in owners:
             for stat in stats:
-                league_stats_df[i_gameweek].loc[i_owner, stat] = all_lineups_df[i_owner, i_gameweek].loc[
-                    value_to_get, stat]
-        league_stats_df[i_gameweek] = league_stats_df[i_gameweek].sort_values('total points', ascending=False)
+                league_stats_df[i_gameweek].loc[i_owner, stat] = all_lineups_df[i_owner, i_gameweek].loc[value_to_get, stat]
+        league_stats_df[i_gameweek] = league_stats_df[i_gameweek].sort_values(
+            'total points', ascending=False)
         for i, i_owner in enumerate(league_stats_df[i_gameweek].index):
             league_stats_df[i_gameweek].loc[i_owner, 'productivity'] = \
-                league_stats_df[i_gameweek].loc[i_owner, 'total points'] / league_stats_df[i_gameweek].loc[i_owner, 'minutes']
+                league_stats_df[i_gameweek].loc[i_owner, 'total points'] / \
+                league_stats_df[i_gameweek].loc[i_owner, 'minutes']
             league_stats_df[i_gameweek].loc[i_owner, 'goal difference'] = \
-                league_stats_df[i_gameweek].loc[i_owner, 'goals scored'] - league_stats_df[i_gameweek].loc[i_owner, 'goals conceded']
+                league_stats_df[i_gameweek].loc[i_owner, 'goals scored'] - \
+                league_stats_df[i_gameweek].loc[i_owner, 'goals conceded']
             league_stats_df[i_gameweek].loc[i_owner, 'weekly position'] = (i + 1)
-        league_stats_df[i_gameweek] = league_stats_df[i_gameweek].rename(columns={'name': 'active players'})
+        league_stats_df[i_gameweek] = league_stats_df[i_gameweek].rename(
+            columns={'name': 'active players'})
     return league_stats_df
 
 
@@ -232,7 +269,8 @@ def get_league_stats_df_by_stat(league_stats_df_by_gameweek, stat, total_type='n
             league_stats_df_by_stat.loc[i_owner, i_gameweek] = league_stats_df_by_gameweek[i_gameweek].loc[i_owner, stat]
         if total_type == 'mean' or total_type == 'average':
             league_stats_df_by_stat.loc[i_owner, 'average'] = league_stats_df_by_stat.loc[i_owner, gameweek_range].mean()
-            league_stats_df_by_stat = league_stats_df_by_stat.sort_values('average', ascending=False)
+            league_stats_df_by_stat = league_stats_df_by_stat.sort_values(
+                'average', ascending=False)
         elif total_type == 'total':
             league_stats_df_by_stat.loc[i_owner, 'totals'] = league_stats_df_by_stat.loc[i_owner, gameweek_range].sum()
             league_stats_df_by_stat = league_stats_df_by_stat.sort_values('totals', ascending=False)
